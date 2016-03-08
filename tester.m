@@ -1,14 +1,21 @@
 load data
 
-nbin = 5;
-hsize = 30;
+nbin = 8;
+hsize = 100;
 N = 300;
 %let N = 300 for about 1000 rows of training per set
 
 %Train
-mlModel1 = LKM.trainModel(data, N, nbin, hsize, trainindex);
-initialparam = [0 0 1.7  .1 .1  7];
+mlModel = LKM.trainModel(data, N, nbin, hsize, trainindex);
+
+i = 14;
+initialparam = data{i}.gtparam + [.01 .1 .2 -30 -30 .5];
+paramweight = [1 1 3 100 100 1.1];
+paramscale = [.5 .5 .5 10 10 1];
+initialparam = initialparam ./ paramweight;
+initialparam = initialparam + paramscale;
 % 
 % % perform registration
-T = LKM.register(data{1}.data3D, data{1}.data2D, k, N, intv,...
-               mlModel,initialparam, true);
+T = LKM.register(data{i}.data3D, data{i}.data2D, N, nbin, hsize,...
+               mlModel{2}.hbinsize{2,1},initialparam, ...
+                true, paramweight, paramscale);

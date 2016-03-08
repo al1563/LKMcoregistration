@@ -31,9 +31,16 @@ classdef LKM
         % Compute histograms and kernel
         kernel = [];
         for k = 1:Npts(1)
-            hist{k} = hist2(pts(:,1),pts(:,2),edge.x(k,:),edge.y(k,:));
+            hist{k} = zeros(length(edge.x(k,:))-1, length(edge.y(k,:))-1);
+            for x_idx = 1:length(edge.x(k,:))-1
+                for y_idx = 1:length(edge.y(k,:))-1
+                    hist{k}(x_idx, y_idx) = sum(pts(:,1) >= edge.x(k,x_idx) & pts(:,1) < edge.x(k,x_idx+1) & ...
+                        pts(:,2) >= edge.y(k,y_idx) & pts(:,2) < edge.y(k,y_idx+1));
+                end;
+            end;
+            %hist{k} = histogram2(pts(:,1),pts(:,2),edge.x(k,:),edge.y(k,:));
             %nbin+3 x nbin+3 matrix. Outer edges give out of bound values
-            hist{k} = hist{k}(2:nbin+1,2:nbin+1); %Take local information
+            %hist{k} = hist{k}(2:nbin+1,2:nbin+1); %Take local information
             hist{k} = hist{k}./sum(sum(hist{k})); %Normalize by numpoints
             kernel = [kernel; hist{k}(:)'];
         end
@@ -51,10 +58,10 @@ classdef LKM
         
         end
 %%
-        function [sim, pts2D] = similarity(pts3D_t, pts2D, mlModel, k, intv)
+        function [sim, pts2D] = similarity(pts3D_t, pts2D, mlModel, nbin, hsize)
             % compute the similarity of point clouds using precomputed kernels
-            kernel3D = LKM.computeKernels(pts3D_t, k, intv);
-            kernel2 = LKM.computeKernels(pts2D,k, intv);
+            kernel3D = LKM.computeKernels(pts3D_t, nbin, hsize);
+            kernel2 = LKM.computeKernels(pts2D, nbin, hsize);
             
             % compute the distance from each point in 2D to nearest
             % neighbor in 3D transformation
@@ -70,11 +77,11 @@ classdef LKM
             % apply machine learning model to 'kernels'
             Ktest = constructKernel(kernels, mlModel.training, mlModel.opts);
             Yhat = Ktest * mlModel.eigvector;
-
+            
             sim = -mean(Yhat);
         end
 %%
-        function mlModel = trainModel(data, N, nbin, hsize, trainindex, a)
+        function mlModel = trainModel(data, N, nbin, hsize, trainindex, a, alpha, t)
             % N: size of point sample
             % nbin: number of bins in local histogram
             % hsize: size of histogram
@@ -115,8 +122,7 @@ classdef LKM
                 kernel2D = kernel2(nearestNeighbors,:);
                 matching = [kernel3D kernel2D distances]; 
                 % Threshold points by distance
-                matching = matching(matching(:,size(matching,2))<20,...
-                            1:size(matching,2)-1);
+                matching = matching(matching(:,size(matching,2))<20,:);
 
                 % create training set of pairs of NONMATCHING points.
                 nonmatching = LKM.nonmatching(data, i, erode2D, ...
@@ -139,11 +145,11 @@ classdef LKM
 
             % perform machine learning on the training set
             opts            = [];
-            opts.ReguAlpha  = 0.1;  % [0.0001, 0.1]
+            opts.ReguAlpha  = alpha;  % [0.0001, 0.1]
             opts.ReguType   = 'Ridge';
             opts.gnd        = labels;   % groundtruth (flair vector length)
             opts.KernelType = 'Gaussian';
-            opts.t          = 6;    % [4, 10]  
+            opts.t          = t;    % [4, 6, 10]  
 
             K = constructKernel(training, training, opts);
             [mlModel.eigvector, ~] = KSR(opts, labels, K);
@@ -154,7 +160,7 @@ classdef LKM
             mlModel.labelsa = labelsa;
         end
 %%
-        function T = register(data3D, data2D, k, N, intv, mlModel, param, display)
+        function T = register(data3D, data2D, N, nbin, hsize, mlModel, param, display, w, s)
             
             % A and B are 3Ddata and 2Ddata respectively.
             % k is the number of nearest-neighbor points to use in each kernel
@@ -168,15 +174,15 @@ classdef LKM
 
             %param = [thetax thetay thetaz shiftx shifty scale]
             %param = [0 0 2.4 50 50 6];
-            param = [param(1) param(2) param(3) param(4) param(5) param(6)];
-            
+            %param = [param(1) param(2) param(3) param(4) param(5) param(6)];
+  
             erode2D = Erode(data2D, 40, 50);
             erode3D = Erode(data3D, 10, 50);
                 
             % Get N random points
             R = randperm(length(erode3D));
             pts3D = erode3D(R(1:2*N),:);
-            pts3D_t = TransformPoint3D2D(param, pts3D);
+            pts3D_t = TransformPoint3D2D((param-s).*w, pts3D);
             
             R = randperm(length(erode2D));
             pts2D = erode2D(R(1:2*N),:);
@@ -186,8 +192,8 @@ classdef LKM
             % compute kernels
             %%%%%%%%%%
 
-            kernel3D = LKM.computeKernels(pts3D_t, k, intv);
-            kernel2D = LKM.computeKernels(pts2D, k, intv); %unnecessary
+            kernel3D = LKM.computeKernels(pts3D_t, nbin, hsize);
+            kernel2D = LKM.computeKernels(pts2D, nbin, hsize); %unnecessary
 
             %%%%%%%%%%
             % set up display
@@ -212,12 +218,12 @@ classdef LKM
             simshow = @(x, varargin) x{varargin{:}};
 
             similarity = @(t) LKM.similarity(...
-                TransformPoint3D2D([t(1) t(2) t(3) t(4) t(5) t(6)], pts3D), ...
-                pts2D, mlModel,k, intv) + 10*abs(t(6)-6);
+                TransformPoint3D2D(t, pts3D), ...
+                pts2D, mlModel,nbin, hsize) + .01*abs(fix((t(6) - 6)/1.5));
             show = @(t, sim) displayPoints(TransformPoint3D2D(t, pts3D),pts2D, sim);
             
             if display
-                LKsim = @(t) simshow({show(t, similarity(t))}, 1);
+                LKsim = @(t) simshow({show((t-s).*w, similarity((t-s).*w))}, 1);
             else
                 LKsim = similarity;
             end
@@ -290,8 +296,8 @@ classdef LKM
             nonkernel2 = [kernel2D4; kernel2D3; kernel2D2; kernel2D1];
 
             %distances = sum((pts3DRand_t-pts2DRand) .^ 2, 2) .^ 0.5;
-            %distances = [d1; d2; d3; d4];
-            nonmatch = [nonkernel3, nonkernel2];
+            distances = [d1; d2; d3; d4];
+            nonmatch = [nonkernel3, nonkernel2 distances];
 
         end
     end
