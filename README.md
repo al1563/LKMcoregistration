@@ -1,5 +1,3 @@
 # LKMcoregistration
 
-Note:
-LKM.similarity and LKM.register
-has not yet been updated yet.
+Perhaps it is better to use the training code for now, as I still need to polish that code before registration can work. 
