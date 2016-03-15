@@ -194,7 +194,7 @@ classdef LKM
                 s = [0 0 0 0 0 0];
             end
             
-            param = (param + s)./w;
+            param = param ./w + s;
             
             %%%%%%%%%%
             % initialize transform
@@ -270,7 +270,7 @@ classdef LKM
             nonkernel2 = LKM.computeKernels(pts2DRand, nbin, hsize);
 
             % Four set of 3D data with different transforms
-            R = randperm(length(erode3D)); pts3DRand = erode3D(R(1:2*N),:);
+            R = randperm(length(erode3D)); pts3DRand = erode3D(R(1:N),:);
             gtrot = rotToAxis(data{i}.rotation);
             gtparam = [gtrot data{i}.shift data{i}.scale];
             pts3DRand_t = TransformPoint3D2D(gtparam, pts3DRand);
@@ -305,7 +305,7 @@ classdef LKM
             
             
             R = randperm(length(erode3D));
-            pts3DRand = erode3D(R(1:2*N),:);
+            pts3DRand = erode3D(R(1:N),:);
             gtparam = [gtrot(1:2) gtrot(3) data{i}.shift data{i}.scale*.5];
             pts3DRand_t4 = TransformPoint3D2D(gtparam, pts3DRand);
             kernel3D4 = LKM.computeKernels(pts3DRand_t4, nbin, hsize);
