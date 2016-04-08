@@ -7,10 +7,10 @@ classdef LKM
     methods(Static)
 %%        
         function [kernel, hist] = computeKernels(pts, nbin, hsize, graph)
-        % pts - Nx2 matrix, each row is a pt and each col is a parametr
+        % pts - Nx2 matrix, each row is a pt and each col is a parameter
         % nbin - number of bin for each local histogram
-        % hsize - how big total histogram be
-        % graph - boolean. Graph some histograms? 1:yes 0:no
+        % hsize - length of side of histogram
+        % graph - boolean. Graph some histograms? (for visualization)
         
         if(nargin < 4)
             graph = 0; % False by default
@@ -44,7 +44,7 @@ classdef LKM
             end;
             % Note: hist takes local info (no bins for out of bound pts)
             
-            hist{k} = hist{k}./sum(sum(hist{k})); % Normlze by # of pts
+            hist{k} = hist{k}./sum(sum(hist{k})); % Normlze by tot # of pts
             kernel = [kernel; hist{k}(:)'];
         end
         
@@ -65,8 +65,8 @@ classdef LKM
         function [sim, pts2D] = similarity(pts3D_t, pts2D, mlModel, nbin, hsize)
             % Compute the similarity of point clouds using precomputed kernels
             % pts3D_t is the transformed and projected 3D point set, Nx2
-            % pts2D is Nx2 matrix
-            % mlModel: pretrained model with .eigvector and training kernel
+            % pts2D is the 2D point set, Nx2 matrix
+            % mlModel: pretrained model with eigvector and training kernel
             % nbin, hsize: Histogram parameters
             
             % Compute Kernels
@@ -90,19 +90,19 @@ classdef LKM
         end
 %%
         function mlModel = trainModel(data, N, nbin, hsize, trainindex, a, alpha, t)
-            % N: size of point sample
-            % nbin: number of bins in local histogram
+            % N: size of point sample, nbin: number of bins in local histogram
             % hsize: size of sides of histogram
             % data is a cell array with fields data2D, data3D, center3D,
             % center2D, rotation, scale, and shift
+            %
             % FOR testing and cross validation (not required):
             % train: array of index in data for training
             % a: index of cross validation set
             % alpha, t: mlmodel parameters
             
             if(nargin < 8)
-                alpha = .01;
-                t = 10;
+                alpha = .0001;
+                t = 4;
                 if(nargin < 6)
                     trainindex = [13 15 16 17];
                     a = 1;
@@ -115,13 +115,13 @@ classdef LKM
             labelsa = [];
 
             for i = [a, trainindex]
-                % Gets rid of noise (is this benefitial to have?)
+                % Get rid of noise
                 data3D = data{i}.data3D;
                 data2D = data{i}.data2D;
                 erode2D = Erode(data2D, 40, 50);
                 erode3D = Erode(data3D, 10, 50);
                 
-                % Get N random points in data3D
+                % Get N random points in 3D data
                 R = randperm(length(erode3D));
                 pts3 = erode3D(R(1:N),:);
                 R = randperm(length(erode2D));
@@ -133,7 +133,7 @@ classdef LKM
                 gtparam = [gtrot data{i}.shift data{i}.scale];
                 pts3_t = TransformPoint3D2D(gtparam, pts3);
                 
-                % Compute kernel for transformed 3D and 2D data
+                % Compute kernel for transformed 3D data and 2D data
                 [kernel3D, hist3D] = LKM.computeKernels(pts3_t, nbin, hsize); 
                 [kernel2, hist2D] = LKM.computeKernels(pts2, nbin, hsize); 
                 
@@ -148,6 +148,7 @@ classdef LKM
                 nonmatching = LKM.nonmatching(data, i, erode2D, ...
                                 erode3D, N, nbin, hsize);
             
+                % For cross validation
                 if(i==a)
                     traininga = [traininga; matching; nonmatching];
                     labelsa = [labelsa; ones(size(matching,1), 1);...
@@ -174,6 +175,7 @@ classdef LKM
 
             K = constructKernel(training, training, opts);
             [mlModel.eigvector, ~] = KSR(opts, labels, K);
+            
             mlModel.opts = opts;
             mlModel.training = training;
             mlModel.labels = labels;
@@ -182,19 +184,18 @@ classdef LKM
         end
 %%
         function T = register(data3D, data2D, N, nbin, hsize, mlModel, param, display, w, s)
-            
             % data3D and data2D takes in the 3D (Nx3) and 2D(Nx2) pts
-            % N is the number of points to sample
+            % N - number of points to sample
             % nbin, hsize: histogram parameters
             % param is initialization of the transform
-            % Display?
+            % display - registration visualization
             % w and s: weight and shift to modify fminsearch
             if(nargin < 9)
                 w = [1 1 1 1 1 1];
                 s = [0 0 0 0 0 0];
             end
             
-            param = param ./w + s;
+            param = param ./w + s; % Apply weighting
             
             %%%%%%%%%%
             % initialize transform
@@ -233,7 +234,7 @@ classdef LKM
             end
 
             %%%%%%%%%%
-            % optimize transform with respect to local kernel matching
+            % Optimize transform with respect to local kernel matching
             %%%%%%%%%%
 
             % using anonymous function LKsim in order to use multiple parameters in
@@ -243,7 +244,6 @@ classdef LKM
             similarity = @(t) LKM.similarity(...
                 TransformPoint3D2D(t, pts3D), ...
                 pts2D, mlModel,nbin, hsize);
-                % + .01*abs(fix((t(6) - 6)/1.5) to give penalty 
             show = @(t, sim) displayPoints(TransformPoint3D2D(t, pts3D),pts2D, sim);
             
             if display
@@ -254,11 +254,12 @@ classdef LKM
             
             % Better search function?
             T = fminsearch(LKsim, param);
+            T = (T-s).*w;
 
         end
 %%
         function  nonmatch = nonmatching(data, i, erode2D, erode3D, N, nbin, hsize)
-            % Kind of specific function to create nonmatching kernels
+            % Rather specific function to create nonmatching kernels
             % nonmatching(data, i, erode2D, erode3D, N, nbin, hsize)
             % data = dataset. i = which dataset? 
             % N number of points, nbin number of bins of histogram
