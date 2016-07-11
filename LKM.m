@@ -20,8 +20,6 @@ classdef LKM
                     nbin = 8; % Arbitrarily chosen
                 end
             end
-        else
-            set(0,'DefaultFigureWindowStyle','docked'); % Figure is docked
         end
         
         Npts = size(pts);
@@ -40,8 +38,8 @@ classdef LKM
                     hist{k}(x_idx, y_idx) = ...
                      sum(pts(:,1) >= edge.x(k,x_idx) & pts(:,1) < edge.x(k,x_idx+1) & ...
                      pts(:,2) >= edge.y(k,y_idx) & pts(:,2) < edge.y(k,y_idx+1));
-                end;
-            end;
+                end
+            end
             % Note: hist takes local info (no bins for out of bound pts)
             
             hist{k} = hist{k}./sum(sum(hist{k})); % Normlze by tot # of pts
@@ -62,7 +60,7 @@ classdef LKM
         
         end
 %%
-        function [sim, pts2D] = similarity(pts3D_t, pts2D, mlModel, nbin, hsize)
+        function [sim, pts2] = similarity(pts3_t, pts2, mlModel, nbin, hsize)
             % Compute the similarity of point clouds using precomputed kernels
             % pts3D_t is the transformed and projected 3D point set, Nx2
             % pts2D is the 2D point set, Nx2 matrix
@@ -70,51 +68,61 @@ classdef LKM
             % nbin, hsize: Histogram parameters
             
             % Compute Kernels
-            kernel3D = LKM.computeKernels(pts3D_t, nbin, hsize);
-            kernel2 = LKM.computeKernels(pts2D, nbin, hsize);
+            kernel3D = LKM.computeKernels(pts3_t, nbin, hsize);
+            kernel2 = LKM.computeKernels(pts2, nbin, hsize);
             
+             % Normalize the transformed 3D data and 2D data
+             
+%              pts3_t = pts3_t - repmat(mean(pts3_t),length(pts3_t),1);
+%              hsize = hsize/max(max(abs(pts3_t)));
+%              pts3_t(:,1) = pts3_t(:,1) / max(abs(pts3_t(:,1)));
+%              pts3_t(:,2) = pts3_t(:,2) / max(abs(pts3_t(:,2)));
+%                 
+%              pts2 = pts2 - repmat(mean(pts2),length(pts2),1);
+%              pts2(:,1) = pts2(:,1) / max(abs(pts2(:,1)));
+%              pts2(:,2) = pts2(:,2) / max(abs(pts2(:,2)));
+%                 
             % Nearest neighbor in 2D pts for each pt in transformed 3D pts
-            [nearestNeighbors, nnDist] = knnsearch(pts2D, pts3D_t);
+            [nearestNeighbors, nnDist] = knnsearch(pts2, pts3_t);
             
             % Pair up kernels. Note: Some 2D kernels will be repeated.
             kernel2D = kernel2(nearestNeighbors,:);
             kernels = [kernel3D kernel2D nnDist];
-            kernels = normc(kernels); % Normalize by columns for mlmodel
+            
+            minT = repmat(mlModel.minC,size(kernels,1),1);
+            maxT = repmat(mlModel.maxC,size(kernels,1),1);
+            kernels = (kernels - minT) ./ (maxT-minT);
             
             % Apply machine learning model
             Ktest = constructKernel(kernels, mlModel.training, mlModel.opts);
             Yhat = Ktest * mlModel.eigvector;
+%             Yhat(Yhat > 1) = 1;
+%             Yhat(Yhat < 0) = 0;
             
             % Similarity measure to minimize
             sim = -mean(Yhat);
         end
 %%
-        function mlModel = trainModel(data, N, nbin, hsize, trainindex, a, alpha, t)
-            % N: size of point sample, nbin: number of bins in local histogram
-            % hsize: size of sides of histogram
-            % data is a cell array with fields data2D, data3D, center3D,
-            % center2D, rotation, scale, and shift
-            %
-            % FOR testing and cross validation (not required):
-            % train: array of index in data for training
-            % a: index of cross validation set
-            % alpha, t: mlmodel parameters
-            
-            if(nargin < 8)
-                alpha = .0001;
-                t = 4;
-                if(nargin < 6)
-                    trainindex = [13 15 16 17];
-                    a = 1;
-                end
-            end
-            
+        function mlModel = trainModel(data, options)
+            % data: a cell array with fields data2D, data3D, center3D,
+            %       center2D, rotation, scale, shift, and gtparam 
+            % options: a structure containing
+            %       hsize: size of sides of histogram
+            %       N: size of point sample, 
+            %       nbin: number of bins in local histogram
+            %       trainingindex: array of index in data for training
+            %       alpha, t: mlmodel parameters
+            % TODO: add distance to threshold matching, erosion param
+                
             training = [];
             labels = [];
-            traininga = [];
-            labelsa = [];
-
-            for i = [a, trainindex]
+            N = options.N;
+            load matchedData;
+            load mismatchedData;
+            
+            % Obtain matching and nonmatching training kernels
+            for i = options.trainingindex
+                i
                 % Get rid of noise
                 data3D = data{i}.data3D;
                 data2D = data{i}.data2D;
@@ -133,60 +141,97 @@ classdef LKM
                 gtparam = [gtrot data{i}.shift data{i}.scale];
                 pts3_t = TransformPoint3D2D(gtparam, pts3);
                 
+                % Normalize the transformed 3D data and 2D data
+%                 pts3_t = pts3_t - repmat(mean(pts3_t),length(pts3_t),1);
+%                 hsize = hsize/max(max(abs(pts3_t)));
+%                 pts3_t(:,1) = pts3_t(:,1) / max(abs(pts3_t(:,1)));
+%                 pts3_t(:,2) = pts3_t(:,2) / max(abs(pts3_t(:,2)));
+%                 
+%                 pts2 = pts2 - repmat(mean(pts2),length(pts2),1);
+%                 pts2(:,1) = pts2(:,1) / max(abs(pts2(:,1)));
+%                 pts2(:,2) = pts2(:,2) / max(abs(pts2(:,2)));
+                
                 % Compute kernel for transformed 3D data and 2D data
-                [kernel3D, hist3D] = LKM.computeKernels(pts3_t, nbin, hsize); 
-                [kernel2, hist2D] = LKM.computeKernels(pts2, nbin, hsize); 
+                [kernel3D, hist3D] = LKM.computeKernels(pts3_t, options.nbin, options.hsize); 
+                [kernel2, hist2D] = LKM.computeKernels(pts2, options.nbin, options.hsize); 
                 
                 % Create training set of pairs of MATCHING points.
                 [nearestNeighbors, distances] = knnsearch(pts2, pts3_t);
                 kernel2D = kernel2(nearestNeighbors,:);
                 matching = [kernel3D kernel2D distances]; 
                 % Threshold points by distance
-                matching = matching(matching(:,size(matching,2))<20,:);
+                matching = matching( matching(:,size(matching,2))<20 , : );
+                
+                % more training for MATCHING points
+                for j = 1:16
+                    j
+                    erodeMatched = Erode(matchedData{i,j},10,50);
+                    R = randperm(length(erodeMatched));
+                    if(length(erodeMatched) < N/50)
+                        match3D = erodeMatched(R,:);
+                    else
+                        match3D = erodeMatched(R(1:N/50),:);
+                    end;
+                    [kernel3D,~] = LKM.computeKernels(match3D, options.nbin, options.hsize);
+                    [nearestNeighbors, distances] = knnsearch(pts2, match3D);
+                    kernel2D = kernel2(nearestNeighbors,:);
+                    matching = [matching; kernel3D kernel2D distances]; 
+                end
 
                 % create training set of pairs of NONMATCHING points.
                 nonmatching = LKM.nonmatching(data, i, erode2D, ...
-                                erode3D, N, nbin, hsize);
-            
-                % For cross validation
-                if(i==a)
-                    traininga = [traininga; matching; nonmatching];
-                    labelsa = [labelsa; ones(size(matching,1), 1);...
-                                zeros(size(nonmatching,1), 1)];
-                else
-                    training = [training; matching; nonmatching];
-                    labels = [labels; ones(size(matching,1), 1);...
-                                zeros(size(nonmatching,1), 1)];
+                               erode3D, options);
+                    % nonmatching = nonmatching(size(matching,1),:);
+
+                % FUN NONMATCHING NESS
+                for j = [1:16, 55:63]
+                    j
+                    erodeMismatched = Erode(mismatchedData{i,j},10,50);
+                    R = randperm(length(erodeMismatched));
+                    if(length(erodeMismatched) < N/50)
+                        nonmatch3D = erodeMismatched(R,:);
+                    else
+                        nonmatch3D = erodeMismatched(R(1:N/50),:);
+                    end;
+                    [nonkernel3D,~] = LKM.computeKernels(nonmatch3D, options.nbin, options.hsize);
+                    [nearestNeighbors, distances] = knnsearch(pts2, nonmatch3D);
+                    nonkernel2D = kernel2(nearestNeighbors,:);
+                    nonmatching = [nonmatching; nonkernel3D nonkernel2D distances]; 
                 end
+
+                training = [training; matching; nonmatching];
+                labels = [labels; ones(size(matching,1), 1);...
+                            zeros(size(nonmatching,1), 1)];
 
             end
             
             % Normalize columnwise
-            training = normc(training);
-            traininga = normc(traininga);
+            minC = repmat(min(training),size(training,1),1); 
+            maxC = repmat(max(training),size(training,1),1);
+            training = (training - minC) ./ (maxC-minC);
 
             % Train machine learning model
             opts            = [];
-            opts.ReguAlpha  = alpha;  % [0.0001, 0.1]
+            opts.ReguAlpha  = options.alpha;  % [0.0001, 0.1]
             opts.ReguType   = 'Ridge';
             opts.gnd        = labels;   % groundtruth (flair vector length)
             opts.KernelType = 'Gaussian';
-            opts.t          = t;    % [4, 6, 10]  
+            opts.t          = options.t;    % [4, 6, 10]  
 
             K = constructKernel(training, training, opts);
             [mlModel.eigvector, ~] = KSR(opts, labels, K);
             
             mlModel.opts = opts;
+            mlModel.minC = minC(1,:);
+            mlModel.maxC = maxC(1,:);
             mlModel.training = training;
             mlModel.labels = labels;
-            mlModel.traininga = traininga;
-            mlModel.labelsa = labelsa;
         end
 %%
-        function T = register(data3D, data2D, N, nbin, hsize, mlModel, param, display, w, s)
+        function [T, sim] = register(data3D, data2D, options, mlModel, param, display, w, s)
             % data3D and data2D takes in the 3D (Nx3) and 2D(Nx2) pts
             % N - number of points to sample
-            % nbin, hsize: histogram parameters
+            % options : nbin, hsize: histogram parameters
             % param is initialization of the transform
             % display - registration visualization
             % w and s: weight and shift to modify fminsearch
@@ -195,10 +240,11 @@ classdef LKM
                 s = [0 0 0 0 0 0];
             end
             
-            param = param ./w + s; % Apply weighting
+            nbin = options.nbin; hsize = options.hsize; 
+            N = options.N;
             
             %%%%%%%%%%
-            % initialize transform
+            % Prepare data
             %%%%%%%%%%
   
             erode2D = Erode(data2D, 40, 50);
@@ -207,20 +253,20 @@ classdef LKM
             % Get N random points
             R = randperm(length(erode3D));
             pts3D = erode3D(R(1:N),:);
-            pts3D_t = TransformPoint3D2D((param-s).*w, pts3D);
+            pts3D_t = TransformPoint3D2D((param), pts3D);
             
             R = randperm(length(erode2D));
             pts2D = erode2D(R(1:N),:);
             
             %%%%%%%%%%
-            % compute kernels
+            % Compute kernels
             %%%%%%%%%%
 
             kernel3D = LKM.computeKernels(pts3D_t, nbin, hsize);
             kernel2D = LKM.computeKernels(pts2D, nbin, hsize); 
 
             %%%%%%%%%%
-            % set up display
+            % Set up display
             %%%%%%%%%%
 
             if display
@@ -236,7 +282,7 @@ classdef LKM
             %%%%%%%%%%
             % Optimize transform with respect to local kernel matching
             %%%%%%%%%%
-
+           
             % using anonymous function LKsim in order to use multiple parameters in
             % fminsearch
             simshow = @(x, varargin) x{varargin{:}};
@@ -253,27 +299,33 @@ classdef LKM
             end
             
             % Better search function?
-            T = fminsearch(LKsim, param);
+%             options = optimoptions(@fminunc,'Algorithm','quasi-newton');
+%             T = fminunc(LKsim, param, options);
+            param = param ./w + s; % Apply weighting
+            T = fminsearch(LKsim, param, optimset('TolX',1e-2,'TolFun',1e-3));
             T = (T-s).*w;
+            [sim, ~] = LKM.similarity(TransformPoint3D2D(T,pts3D), pts2D, mlModel, nbin, hsize)
 
         end
 %%
-        function  nonmatch = nonmatching(data, i, erode2D, erode3D, N, nbin, hsize)
+        function  nonmatch = nonmatching(data, i, erode2D, erode3D, options)
             % Rather specific function to create nonmatching kernels
             % nonmatching(data, i, erode2D, erode3D, N, nbin, hsize)
             % data = dataset. i = which dataset? 
-            % N number of points, nbin number of bins of histogram
-            % hsize how big histogram be
+            % options:
+            %   N number of points, nbin number of bins of histogram
+            %   hsize how big histogram be
+            N = options.N; nbin = options.nbin; hsize = options.hsize;
             
             %Get 2D data
             R = randperm(length(erode2D));
             pts2DRand = erode2D(R(1:N),:);
             nonkernel2 = LKM.computeKernels(pts2DRand, nbin, hsize);
+            gtparam = data{i}.gtparam;
 
             % Four set of 3D data with different transforms
-            R = randperm(length(erode3D)); pts3DRand = erode3D(R(1:N),:);
-            gtrot = rotToAxis(data{i}.rotation);
-            gtparam = [gtrot data{i}.shift data{i}.scale];
+            R = randperm(length(erode3D)); 
+            pts3DRand = erode3D(R(1:N),:);
             pts3DRand_t = TransformPoint3D2D(gtparam, pts3DRand);
             R = (randperm(floor(N/4)));
             kernel2D1 = nonkernel2(R(1:floor(N/4)),:);
@@ -284,6 +336,7 @@ classdef LKM
 
             R = randperm(length(erode3D));
             pts3DRand = erode3D(R(1:N),:);
+            gtrot = gtparam(1:3);
             gtparam = [gtrot data{i}.shift-30 data{i}.scale];
             pts3DRand_t2 = TransformPoint3D2D(gtparam, pts3DRand);
             kernel3D2 = LKM.computeKernels(pts3DRand_t2, nbin, hsize);
@@ -317,7 +370,6 @@ classdef LKM
             kernel2D4 = nonkernel2(NNparam4,:);
 
             % Compute kernels
-            
             nonkernel3 = [kernel3D4; kernel3D3; kernel3D2; kernel3D1];
             nonkernel2 = [kernel2D4; kernel2D3; kernel2D2; kernel2D1];
 
